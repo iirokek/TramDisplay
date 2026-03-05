@@ -1,0 +1,17 @@
+#pragma once
+
+// WiFi credentials
+#define WIFI_SSID "your_wifi_ssid"
+#define WIFI_PASS "your_wifi_password"
+
+// Backend API configuration
+#define API_HOST "http://localhost:8000"
+
+// Nysse stop ID to display departures. 
+#define STOP_ID "08111" // Tulli A stop  
+
+// Timezone configuration (POSIX format)
+#define TIMEZONE "EET-2EEST,M3.5.0/3,M10.5.0/4" // Helsinki
+
+// NTP server for time sync
+#define NTP_SERVER "pool.ntp.org"

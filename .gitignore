@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Environment
+**/.env
+.venv/
+venv/
+
+# GTFS static data (too large for GitHub, download from source)
+Backend/app/data/gtfs_static/*.txt
+
+# Firmware
+Firmware/config.h
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

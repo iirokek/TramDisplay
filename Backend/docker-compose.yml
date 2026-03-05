@@ -1,0 +1,11 @@
+services:
+  nysse-display:
+    build: .
+    container_name: nysse-display
+    env_file:
+      - .env
+    environment:
+      - TZ=Europe/Helsinki
+    ports:
+      - "8000:8000"
+    restart: unless-stopped

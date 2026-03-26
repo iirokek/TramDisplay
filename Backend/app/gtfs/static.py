@@ -12,6 +12,10 @@ trips = pd.read_csv(GTFS_STATIC_PATH / "trips.txt")
 # This strips the prefix and keep the suffix so realtime and static trips can be matched.
 trips["trip_id_suffix"] = trips["trip_id"].str.split("_", n=1).str[1]
 
+# Some RT feeds only provide the final numeric trip number (no underscores).
+# Keep just the last segment so we can match those too.
+trips["trip_id_last"] = trips["trip_id"].str.rsplit("_", n=1).str[-1]
+
 stop_times = pd.read_csv(GTFS_STATIC_PATH / "stop_times.txt", dtype={"stop_id": str})
 calendar = pd.read_csv(
     GTFS_STATIC_PATH / "calendar.txt",

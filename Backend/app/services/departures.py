@@ -1,6 +1,9 @@
 import time
 from datetime import datetime
+import logging
 from app.gtfs.static import stops, trips, route_short_name_map, get_scheduled_departures
+
+logger = logging.getLogger(__name__)
 from app.gtfs.realtime import fetch_departures_for_stop
 from app.models.display import DisplayResponse
 from app.config import MAX_DEPARTURES
@@ -61,22 +64,27 @@ def get_departures_for_stop(stop_id: str) -> DisplayResponse:
 
             # Fall back to suffix-based matching if the prefix differs
             if trips_row.empty:
-                suffix = str(trip_id).split("_", 1)[1] if "_" in str(trip_id) else None
-                if suffix:
-                    trips_row = trips[trips["trip_id_suffix"] == suffix]
+                trip_suffix = str(trip_id).split("_", 1)[1] if "_" in str(trip_id) else None
+                if trip_suffix:
+                    trips_row = trips[trips["trip_id_suffix"] == trip_suffix]
+
+            if trips_row.empty:
+                trips_row = trips[trips["trip_id_last"] == str(trip_id)]
 
             if not trips_row.empty:
                 route_id_from_trip = str(trips_row.iloc[0]["route_id"])
                 line = route_short_name_map.get(route_id_from_trip, route_id_from_trip)
                 destination = trips_row.iloc[0]["trip_headsign"]
                 suffix = trips_row.iloc[0]["trip_id_suffix"]
+            else:
+                logger.warning(
+                    "RT trip not matched to static data - trip_id=%s route_id=%s",
+                    trip_id, rt_dep["route_id"],
+                )
 
-        # If static lookup failed, use whatever the realtime feed provides
-        route_id = rt_dep["route_id"]
-        if not line:
-            line = route_short_name_map.get(str(route_id), str(route_id)) if route_id else "???"
-        if not destination:
-            destination = "Unknown"
+        # If static lookup failed, skip this RT entry entirely.
+        if not line or not destination:
+            continue
 
         if suffix:
             seen_suffixes.add(suffix)
@@ -105,9 +113,23 @@ def get_departures_for_stop(stop_id: str) -> DisplayResponse:
             (line, destination, _format_time(departure_dt), minutes),
         ))
 
-    # 3. Sort by departure time and return the nearest N departures
+    # 3. Sort and deduplicate
     departures.sort(key=lambda x: x[0])
-    final = [dep for _, dep in departures[:MAX_DEPARTURES]]
+    seen_minutes: dict[str, int] = {}   
+    deduped: list[tuple] = []
+
+    for dep_unix, dep_tuple in departures:
+        time_str = dep_tuple[2]  
+        if time_str in seen_minutes:
+            idx = seen_minutes[time_str]
+            # Replace existing entry if the new one has a resolved destination
+            if deduped[idx][1][1] == "Unknown" and dep_tuple[1] != "Unknown":
+                deduped[idx] = (dep_unix, dep_tuple)
+        else:
+            seen_minutes[time_str] = len(deduped)
+            deduped.append((dep_unix, dep_tuple))
+
+    final = [dep for _, dep in deduped[:MAX_DEPARTURES]]
 
     return DisplayResponse(
         stop_name=stop_name,

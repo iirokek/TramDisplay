@@ -6,6 +6,11 @@ services:
       - .env
     environment:
       - TZ=Europe/Helsinki
+    volumes:
+      - gtfs-rt-cache:/var/cache/tram-display
     ports:
       - "8000:8000"
     restart: unless-stopped
+
+volumes:
+  gtfs-rt-cache:

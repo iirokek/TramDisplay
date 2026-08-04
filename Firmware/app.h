@@ -27,8 +27,9 @@ extern U8G2_FOR_ADAFRUIT_GFX u8g2;
 #define SERIAL_RX     44
 #define SERIAL_TX     43
 
-const int BUTTON_REFRESH = 3;   // Physical button to trigger a data refresh
-const int BATTERY_PIN = 4;       // ADC pin for battery voltage reading (GPIO4 on E1001)
+const int BUTTON_REFRESH = 3;       // Physical button to trigger a data refresh
+const int BATTERY_ADC_PIN = 1;      // Battery voltage ADC on reTerminal E1001
+const int BATTERY_ENABLE_PIN = 21;  // Enables the E1001 battery voltage divider
 
 // E-paper display driver 
 #define EPD_SELECT 0

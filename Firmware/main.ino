@@ -72,7 +72,10 @@ void setup() {
   pinMode(BUTTON_REFRESH, INPUT_PULLUP);
   
   // Configure ADC for battery reading
-  analogReadResolution(12);  // 12-bit ADC (0-4095)
+  pinMode(BATTERY_ENABLE_PIN, OUTPUT);
+  digitalWrite(BATTERY_ENABLE_PIN, LOW);
+  analogReadResolution(12);
+  analogSetPinAttenuation(BATTERY_ADC_PIN, ADC_11db);
   
   connectWifi();
 

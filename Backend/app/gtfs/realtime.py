@@ -1,6 +1,85 @@
+import time
+import logging
+from threading import Lock
+
 import requests
+from google.protobuf.message import DecodeError
 from google.transit import gtfs_realtime_pb2
-from app.config import GTFS_RT_URL, GTFS_RT_TIMEOUT, GTFS_RT_TOKEN
+from app.config import (
+    GTFS_RT_CACHE_PATH,
+    GTFS_RT_CACHE_TTL,
+    GTFS_RT_URL,
+    GTFS_RT_TIMEOUT,
+    GTFS_RT_TOKEN,
+)
+
+
+logger = logging.getLogger(__name__)
+_feed_cache = None
+_feed_cached_at = 0.0
+_feed_lock = Lock()
+
+
+def _parse_feed(content: bytes):
+    feed = gtfs_realtime_pb2.FeedMessage()
+    feed.ParseFromString(content)
+    return feed
+
+
+def _load_disk_cache():
+    try:
+        return _parse_feed(GTFS_RT_CACHE_PATH.read_bytes())
+    except FileNotFoundError:
+        return None
+    except (OSError, DecodeError) as error:
+        logger.warning("Could not load realtime feed cache: %s", error)
+        return None
+
+
+def _store_disk_cache(content: bytes) -> None:
+    try:
+        GTFS_RT_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path = GTFS_RT_CACHE_PATH.with_suffix(".tmp")
+        temporary_path.write_bytes(content)
+        temporary_path.replace(GTFS_RT_CACHE_PATH)
+    except OSError as error:
+        logger.warning("Could not persist realtime feed cache: %s", error)
+
+
+def _get_feed():
+    """Return a feed cached long enough to respect Waltti's rate limit."""
+    global _feed_cache, _feed_cached_at
+
+    with _feed_lock:
+        if _feed_cache is None:
+            _feed_cache = _load_disk_cache()
+
+        now = time.monotonic()
+        if _feed_cache is not None and now - _feed_cached_at < GTFS_RT_CACHE_TTL:
+            return _feed_cache
+
+        headers = {"Authorization": f"Basic {GTFS_RT_TOKEN}"}
+        try:
+            response = requests.get(
+                GTFS_RT_URL,
+                headers=headers,
+                timeout=GTFS_RT_TIMEOUT,
+            )
+            response.raise_for_status()
+            feed = _parse_feed(response.content)
+        except (requests.RequestException, DecodeError) as error:
+            if _feed_cache is not None:
+                logger.warning("Realtime feed refresh failed; using cached feed")
+                _feed_cached_at = now
+                return _feed_cache
+            if isinstance(error, DecodeError):
+                raise requests.RequestException("Invalid realtime feed") from error
+            raise
+
+        _store_disk_cache(response.content)
+        _feed_cache = feed
+        _feed_cached_at = now
+        return feed
 
 
 def fetch_departures_for_stop(stop_id: str) -> list:
@@ -9,15 +88,10 @@ def fetch_departures_for_stop(stop_id: str) -> list:
     for a specific stop. Skips canceled trips and skipped stops.
 
     Returns a list of dicts with keys:
-        route_id, trip_id, trip_direction, departure_time (unix), canceled
+        route_id, trip_id, trip_direction, destination,
+        destination_stop_id, departure_time (unix), canceled
     """
-    headers = {"Authorization": f"Basic {GTFS_RT_TOKEN}"}
-
-    # Download and parse the protobuf feed
-    feed = gtfs_realtime_pb2.FeedMessage()
-    response = requests.get(GTFS_RT_URL, headers=headers, timeout=GTFS_RT_TIMEOUT)
-    response.raise_for_status()
-    feed.ParseFromString(response.content)
+    feed = _get_feed()
 
     departures = []
     for entity in feed.entity:
@@ -28,6 +102,17 @@ def fetch_departures_for_stop(stop_id: str) -> list:
         route_id = trip.route_id if trip.HasField("route_id") else None
         trip_id = trip.trip_id if trip.HasField("trip_id") else None
         trip_direction = trip.direction_id if trip.HasField("direction_id") else None
+        destination = (
+            entity.trip_update.vehicle.label
+            if entity.trip_update.HasField("vehicle")
+            and entity.trip_update.vehicle.HasField("label")
+            else None
+        )
+        destination_stop_id = next((
+            stu.stop_id
+            for stu in reversed(entity.trip_update.stop_time_update)
+            if stu.stop_id
+        ), None)
         canceled_trip = (
             trip.schedule_relationship == gtfs_realtime_pb2.TripDescriptor.CANCELED
         )
@@ -53,6 +138,8 @@ def fetch_departures_for_stop(stop_id: str) -> list:
                     "route_id": route_id,
                     "trip_id": trip_id,
                     "trip_direction": trip_direction,
+                    "destination": destination,
+                    "destination_stop_id": destination_stop_id,
                     "departure_time": departure_time,
                     "canceled": False,
                 })

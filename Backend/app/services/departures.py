@@ -1,7 +1,14 @@
 import time
 from datetime import datetime
 import logging
-from app.gtfs.static import stops, trips, route_short_name_map, get_scheduled_departures
+import requests
+from app.gtfs.static import (
+    stops,
+    stop_times,
+    trips,
+    route_short_name_map,
+    get_scheduled_departures,
+)
 
 logger = logging.getLogger(__name__)
 from app.gtfs.realtime import fetch_departures_for_stop
@@ -34,7 +41,11 @@ def get_departures_for_stop(stop_id: str) -> DisplayResponse:
     stop_name = stop_row.iloc[0]["stop_name"]
 
     # 1. Realtime departures
-    realtime_departures = fetch_departures_for_stop(stop_id)
+    try:
+        realtime_departures = fetch_departures_for_stop(stop_id)
+    except requests.RequestException as error:
+        logger.warning("Realtime departures unavailable; using static data: %s", error)
+        realtime_departures = []
     realtime_departures.sort(key=lambda x: x["departure_time"])
 
     # Track which trips we've already seen so we don't duplicate them
@@ -82,7 +93,36 @@ def get_departures_for_stop(stop_id: str) -> DisplayResponse:
                     trip_id, rt_dep["route_id"],
                 )
 
-        # If static lookup failed, skip this RT entry entirely.
+        if not destination:
+            destination = rt_dep["destination"]
+        if not destination and rt_dep["destination_stop_id"]:
+            destination_row = stops[
+                stops["stop_id"] == str(rt_dep["destination_stop_id"])
+            ]
+            if not destination_row.empty:
+                destination = destination_row.iloc[0]["stop_name"]
+
+        # Current realtime trip IDs may not exist in an older static snapshot.
+        # In that case, match the destination against trips serving this stop.
+        if not line and destination:
+            destination_name, separator, platform = destination.rpartition(" ")
+            if not (separator and len(platform) == 1 and platform.isalpha()):
+                destination_name = destination
+            stop_trip_ids = stop_times.loc[
+                stop_times["stop_id"] == stop_id, "trip_id"
+            ]
+            candidates = trips[
+                trips["trip_id"].isin(stop_trip_ids)
+                & trips["trip_headsign"].str.casefold().eq(destination_name.casefold())
+            ]
+            if not candidates.empty:
+                route_id = str(candidates.iloc[0]["route_id"])
+                line = route_short_name_map.get(route_id)
+                destination = candidates.iloc[0]["trip_headsign"]
+
+        if not line and rt_dep["route_id"]:
+            line = route_short_name_map.get(str(rt_dep["route_id"]))
+
         if not line or not destination:
             continue
 

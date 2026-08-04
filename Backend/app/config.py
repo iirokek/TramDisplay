@@ -12,6 +12,11 @@ GTFS_RT_URL = os.environ.get(
     "https://data.waltti.fi/tampere/api/gtfsrealtime/v1.0/feed/tripupdate",
 )
 GTFS_RT_TIMEOUT = int(os.environ.get("GTFS_RT_TIMEOUT", "5"))
+GTFS_RT_CACHE_TTL = int(os.environ.get("GTFS_RT_CACHE_TTL", "30"))
+GTFS_RT_CACHE_PATH = Path(os.environ.get(
+    "GTFS_RT_CACHE_PATH",
+    "/var/cache/tram-display/tripupdate.pb",
+))
 
 # Base64-encoded API credentials — must be set in the environment
 GTFS_RT_TOKEN = os.environ["GTFS_RT_TOKEN"]

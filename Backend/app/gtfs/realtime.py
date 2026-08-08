@@ -1,5 +1,6 @@
 import time
 import logging
+from dataclasses import dataclass, field
 from threading import Lock
 
 import requests
@@ -11,13 +12,23 @@ from app.config import (
     GTFS_RT_URL,
     GTFS_RT_TIMEOUT,
     GTFS_RT_TOKEN,
+    GTFS_RT_VEHICLE_POSITIONS_CACHE_PATH,
+    GTFS_RT_VEHICLE_POSITIONS_URL,
 )
 
 
 logger = logging.getLogger(__name__)
-_feed_cache = None
-_feed_cached_at = 0.0
-_feed_lock = Lock()
+
+
+@dataclass
+class _FeedState:
+    feed: object | None = None
+    cached_at: float = 0.0
+    lock: Lock = field(default_factory=Lock)
+
+
+_trip_update_state = _FeedState()
+_vehicle_position_state = _FeedState()
 
 
 def _parse_feed(content: bytes):
@@ -26,9 +37,9 @@ def _parse_feed(content: bytes):
     return feed
 
 
-def _load_disk_cache():
+def _load_disk_cache(cache_path):
     try:
-        return _parse_feed(GTFS_RT_CACHE_PATH.read_bytes())
+        return _parse_feed(cache_path.read_bytes())
     except FileNotFoundError:
         return None
     except (OSError, DecodeError) as error:
@@ -36,50 +47,61 @@ def _load_disk_cache():
         return None
 
 
-def _store_disk_cache(content: bytes) -> None:
+def _store_disk_cache(cache_path, content: bytes) -> None:
     try:
-        GTFS_RT_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        temporary_path = GTFS_RT_CACHE_PATH.with_suffix(".tmp")
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path = cache_path.with_suffix(".tmp")
         temporary_path.write_bytes(content)
-        temporary_path.replace(GTFS_RT_CACHE_PATH)
+        temporary_path.replace(cache_path)
     except OSError as error:
         logger.warning("Could not persist realtime feed cache: %s", error)
 
 
-def _get_feed():
+def _get_feed(url, cache_path, state: _FeedState):
     """Return a feed cached long enough to respect Waltti's rate limit."""
-    global _feed_cache, _feed_cached_at
-
-    with _feed_lock:
-        if _feed_cache is None:
-            _feed_cache = _load_disk_cache()
+    with state.lock:
+        if state.feed is None:
+            state.feed = _load_disk_cache(cache_path)
 
         now = time.monotonic()
-        if _feed_cache is not None and now - _feed_cached_at < GTFS_RT_CACHE_TTL:
-            return _feed_cache
+        if state.feed is not None and now - state.cached_at < GTFS_RT_CACHE_TTL:
+            return state.feed
 
         headers = {"Authorization": f"Basic {GTFS_RT_TOKEN}"}
         try:
             response = requests.get(
-                GTFS_RT_URL,
+                url,
                 headers=headers,
                 timeout=GTFS_RT_TIMEOUT,
             )
             response.raise_for_status()
             feed = _parse_feed(response.content)
         except (requests.RequestException, DecodeError) as error:
-            if _feed_cache is not None:
+            if state.feed is not None:
                 logger.warning("Realtime feed refresh failed; using cached feed")
-                _feed_cached_at = now
-                return _feed_cache
+                state.cached_at = now
+                return state.feed
             if isinstance(error, DecodeError):
                 raise requests.RequestException("Invalid realtime feed") from error
             raise
 
-        _store_disk_cache(response.content)
-        _feed_cache = feed
-        _feed_cached_at = now
+        _store_disk_cache(cache_path, response.content)
+        state.feed = feed
+        state.cached_at = now
         return feed
+
+
+def _get_trip_update_feed():
+    return _get_feed(GTFS_RT_URL, GTFS_RT_CACHE_PATH, _trip_update_state)
+
+
+def fetch_vehicle_positions_feed():
+    """Fetch and decode the Waltti GTFS-Realtime vehicle-position feed."""
+    return _get_feed(
+        GTFS_RT_VEHICLE_POSITIONS_URL,
+        GTFS_RT_VEHICLE_POSITIONS_CACHE_PATH,
+        _vehicle_position_state,
+    )
 
 
 def fetch_departures_for_stop(stop_id: str) -> list:
@@ -91,7 +113,7 @@ def fetch_departures_for_stop(stop_id: str) -> list:
         route_id, trip_id, trip_direction, destination,
         destination_stop_id, departure_time (unix), canceled
     """
-    feed = _get_feed()
+    feed = _get_trip_update_feed()
 
     departures = []
     for entity in feed.entity:

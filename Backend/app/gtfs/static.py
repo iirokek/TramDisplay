@@ -35,6 +35,24 @@ route_short_name_map = dict(zip(
 _DOW_COLS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 
 
+def find_trip(trip_id):
+    """Match a realtime trip ID to its static GTFS row."""
+    if not trip_id:
+        return None
+
+    trip_id = str(trip_id)
+    matching_trips = trips[trips["trip_id"] == trip_id]
+
+    if matching_trips.empty and "_" in trip_id:
+        trip_suffix = trip_id.split("_", 1)[1]
+        matching_trips = trips[trips["trip_id_suffix"] == trip_suffix]
+
+    if matching_trips.empty:
+        matching_trips = trips[trips["trip_id_last"] == trip_id]
+
+    return None if matching_trips.empty else matching_trips.iloc[0]
+
+
 def _active_service_ids(date: datetime) -> set:
     """
     Determine which service_ids are running on a given date by checking

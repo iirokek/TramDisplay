@@ -7,6 +7,7 @@ from app.gtfs.static import (
     stop_times,
     trips,
     route_short_name_map,
+    find_trip,
     get_scheduled_departures,
 )
 
@@ -70,23 +71,13 @@ def get_departures_for_stop(stop_id: str) -> DisplayResponse:
         suffix = None
 
         if trip_id:
-            # First try an exact trip_id match
-            trips_row = trips[trips["trip_id"] == str(trip_id)]
+            trip_row = find_trip(trip_id)
 
-            # Fall back to suffix-based matching if the prefix differs
-            if trips_row.empty:
-                trip_suffix = str(trip_id).split("_", 1)[1] if "_" in str(trip_id) else None
-                if trip_suffix:
-                    trips_row = trips[trips["trip_id_suffix"] == trip_suffix]
-
-            if trips_row.empty:
-                trips_row = trips[trips["trip_id_last"] == str(trip_id)]
-
-            if not trips_row.empty:
-                route_id_from_trip = str(trips_row.iloc[0]["route_id"])
+            if trip_row is not None:
+                route_id_from_trip = str(trip_row["route_id"])
                 line = route_short_name_map.get(route_id_from_trip, route_id_from_trip)
-                destination = trips_row.iloc[0]["trip_headsign"]
-                suffix = trips_row.iloc[0]["trip_id_suffix"]
+                destination = trip_row["trip_headsign"]
+                suffix = trip_row["trip_id_suffix"]
             else:
                 logger.warning(
                     "RT trip not matched to static data - trip_id=%s route_id=%s",

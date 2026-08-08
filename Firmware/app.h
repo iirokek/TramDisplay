@@ -27,9 +27,16 @@ extern U8G2_FOR_ADAFRUIT_GFX u8g2;
 #define SERIAL_RX     44
 #define SERIAL_TX     43
 
-const int BUTTON_REFRESH = 3;       // Physical button to trigger a data refresh
+const int BUTTON_REFRESH = 3;       // Right green button refreshes the current screen
+const int BUTTON_DEPARTURES = 4;    // Middle button opens departures
+const int BUTTON_MAP = 5;           // Left button opens the map
 const int BATTERY_ADC_PIN = 1;      // Battery voltage ADC on reTerminal E1001
 const int BATTERY_ENABLE_PIN = 21;  // Enables the E1001 battery voltage divider
+
+enum class ScreenMode {
+  Departures,
+  Map
+};
 
 // E-paper display driver 
 #define EPD_SELECT 0
